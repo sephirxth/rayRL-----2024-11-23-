@@ -3,6 +3,10 @@ import ray
 from ray import tune
 import argparse
 from ray.rllib.algorithms.dqn import DQNConfig
+import sys
+import os
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from pprint import pprint
 from env.sumo_env import SumoEnv
 from ray.tune.registry import register_env
 
@@ -73,18 +77,33 @@ def run_dqn_remote(max_episode, config_file, task_id):
     return run_dqn(max_episode, config_file, task_id)
 
 if __name__ == "__main__":
+    import os
     # 解析命令行参数
     parser = argparse.ArgumentParser(description="Select simulation mode")
-    parser.add_argument("--mode", choices=["no-rl", "dqn"], required=True, help="Simulation mode: 'no-rl' or 'dqn'")
+    parser.add_argument("--mode", choices=["no-rl", "dqn"], default="dqn", help="Simulation mode: 'no-rl' or 'dqn'")
     parser.add_argument("--num_tasks", type=int, default=1, help="Number of tasks to run in parallel")
     args = parser.parse_args()
 
-    config_file = 'sumo_xml/three_points.sumocfg'
-    max_episode = 200
+    project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
+    # 使用绝对路径指定配置文件
+    config_file = os.path.join(project_root, "sumo_xml", "three_points.sumocfg")
+     
+    max_episode = 200
     # 启动 Ray
     ray.shutdown()  #关闭之前的ray
-    ray.init(ignore_reinit_error=True)
+    ray.init(
+        ignore_reinit_error=True,
+        runtime_env={
+            "working_dir": project_root,  # 使用项目根目录作为工作目录
+            "py_modules": [
+                os.path.join(project_root, "env")  # 显式包含 env 模块
+            ],
+        },
+    )
+   
+    
+    #ray.init(ignore_reinit_error=True)
     # print("Ray initialized:", ray.is_initialized())
     # print("Current active workers:", ray.available_resources())
 
@@ -108,4 +127,4 @@ if __name__ == "__main__":
     # 输出结果
     print("\nResults:")
     for result in results:
-        print(result)
+        pprint(result)

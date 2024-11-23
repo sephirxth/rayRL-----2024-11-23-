@@ -20,7 +20,8 @@ from env.sumo_env import SumoEnv
 def train(max_episode, config_file, task_id):
     # 配置训练参数
     env = SumoEnv(
-        render_mode="rgb_array",
+        #render_mode="rgb_array",
+        render_mode="human",
         max_episodes=max_episode,
         max_sim_time=5000,
         sumocfg=config_file,
