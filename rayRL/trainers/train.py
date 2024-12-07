@@ -1,25 +1,25 @@
 import traci
+import sys
+import os
 import ray
 from ray import tune
 import argparse
 from ray.rllib.algorithms.dqn import DQNConfig
-import sys
-import os
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from pprint import pprint
-from env.sumo_env import SumoEnv
 from ray.tune.registry import register_env
 
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from env.sumo_env import SumoEnv
+
+# 注册环境
 def create_env(env_config):
     return SumoEnv(**env_config)
-
 register_env("sumo_env",create_env)
 
 
 # 使用无强化学习运行仿真
 def run_no_rl(max_episode, config_file, task_id):
     print(f"Starting No-RL simulation for task {task_id}")
-    env = SumoEnv(render_mode="rgb_array", max_episodes=max_episode, max_sim_time=5000, sumocfg=config_file)
+    env = SumoEnv(render_mode="rgb_array", max_episodes=max_episode, max_sim_time=10000, sumocfg=config_file)
 
     for episode in range(max_episode):
         state = env.reset()
@@ -31,7 +31,7 @@ def run_no_rl(max_episode, config_file, task_id):
             state = env._get_combined_state()
             done = env.check_terminated()
         print(f"Task {task_id}, Episode {episode} completed with random actions.")
-    env.close()
+        print("回合========>>>>>>:", episode)
     return f"Task {task_id}: No-RL simulation completed"
 
 # 使用 DQN 算法运行仿真
@@ -64,6 +64,7 @@ def run_dqn(max_episode, config_file, task_id):
         if episode % 10 == 0:
             checkpoint = dqn_trainer.save()
             print(f"Task {task_id}, Checkpoint saved at {checkpoint}")
+        print("回合========>>>>>>:", episode)
     return f"Task {task_id}: DQN simulation completed"
 
 # Ray 远程任务：No-RL
@@ -77,19 +78,20 @@ def run_dqn_remote(max_episode, config_file, task_id):
     return run_dqn(max_episode, config_file, task_id)
 
 if __name__ == "__main__":
-    import os
     # 解析命令行参数
     parser = argparse.ArgumentParser(description="Select simulation mode")
-    parser.add_argument("--mode", choices=["no-rl", "dqn"], default="dqn", help="Simulation mode: 'no-rl' or 'dqn'")
+    parser.add_argument("--mode", choices=["no-rl", "dqn"], required=True, help="Simulation mode: 'no-rl' or 'dqn'")
     parser.add_argument("--num_tasks", type=int, default=1, help="Number of tasks to run in parallel")
     args = parser.parse_args()
 
-    project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-
     # 使用绝对路径指定配置文件
-    config_file = os.path.join(project_root, "sumo_xml", "three_points.sumocfg")
-     
-    max_episode = 200
+    project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    # config_file = os.path.join(project_root, "sumo_xml", "three_points.sumocfg")
+    config_file = os.path.join(project_root, "one_way_xml", "one_way.sumocfg")
+    
+    #每个task的训练回合数
+    max_episode = 2
+
     # 启动 Ray
     ray.shutdown()  #关闭之前的ray
     ray.init(
@@ -101,9 +103,6 @@ if __name__ == "__main__":
             ],
         },
     )
-   
-    
-    #ray.init(ignore_reinit_error=True)
     # print("Ray initialized:", ray.is_initialized())
     # print("Current active workers:", ray.available_resources())
 
@@ -127,4 +126,4 @@ if __name__ == "__main__":
     # 输出结果
     print("\nResults:")
     for result in results:
-        pprint(result)
+        print(result)
