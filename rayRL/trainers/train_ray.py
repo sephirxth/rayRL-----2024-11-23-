@@ -4,8 +4,10 @@ import os
 import ray
 from ray import tune
 import argparse
+import matplotlib.pyplot as plt
 from ray.rllib.algorithms.dqn import DQNConfig
 from ray.tune.registry import register_env
+from ray.tune import Callback
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from env.sumo_env import SumoEnv
@@ -14,6 +16,8 @@ from env.sumo_env import SumoEnv
 def create_env(env_config):
     return SumoEnv(**env_config)
 register_env("sumo_env",create_env)
+
+
 
 
 # 使用无强化学习运行仿真
@@ -44,22 +48,28 @@ def run_dqn(max_episode, config_file, task_id):
     dqn_config.env_config = {
         "render_mode": "rgb_array",
         "max_episodes": max_episode,
-        "max_sim_time": 5000,
+        "max_sim_time": 8000,
         "sumocfg": config_file,
     }
     dqn_config.gamma = 0.99
     dqn_config.lr = 1e-3
     dqn_config.train_batch_size = 64
     dqn_config.num_workers = 1  # 单线程训练
-    dqn_config.num_gpus = 1  # 不使用 GPU，可根据需要调整
+    dqn_config.num_gpus = 1  # 使用 GPU为1
 
     # 初始化 DQN 算法
     dqn_trainer = dqn_config.build()
+    env = dqn_trainer.get_env()  # 使用 get_env() 获取环境
 
     # 开始训练
     for episode in range(max_episode):
-        result = dqn_trainer.train()
-        # print(f"Task {task_id}, Episode {episode}, Reward: {result['episode_reward_mean']}")
+        # 显式调用reset方法
+        state = env.reset()  # 重新初始化环境状态
+        done = False
+        while not done:
+            action = dqn_trainer.compute_action(state)  # 计算动作
+            state, reward, done, info = env.step(action)  # 执行动作并获取反馈
+            # traci.simulationStep()  # 进行仿真步进
         # 保存模型
         if episode % 10 == 0:
             checkpoint = dqn_trainer.save()
@@ -90,7 +100,7 @@ if __name__ == "__main__":
     config_file = os.path.join(project_root, "one_way_xml", "one_way.sumocfg")
     
     #每个task的训练回合数
-    max_episode = 2
+    max_episode = 15
 
     # 启动 Ray
     ray.shutdown()  #关闭之前的ray
