@@ -5,7 +5,8 @@ import ray
 from ray import tune
 import argparse
 import matplotlib.pyplot as plt
-from ray.rllib.algorithms.dqn import DQNConfig
+from ray.rllib.algorithms.ppo import PPOConfig  
+from ray.rllib.policy import Policy
 from ray.tune.registry import register_env
 from ray.tune import Callback
 
@@ -15,125 +16,97 @@ from env.sumo_env import SumoEnv
 # 注册环境
 def create_env(env_config):
     return SumoEnv(**env_config)
-register_env("sumo_env",create_env)
+register_env("sumo_env", create_env)
 
+class PPOSimulation:
+    def __init__(self, max_episode, config_file):
+        self.max_episode = max_episode
+        self.config_file = config_file
+        # 配置 PPO 参数
+        self.ppo_config = PPOConfig()
+        self.ppo_config.env = "sumo_env"
+        self.ppo_config.env_config = {
+            "render_mode": "rgb_array",
+            "max_episodes": max_episode,
+            "max_sim_time": 8000,
+            "sumocfg": config_file,
+        }
+        self.ppo_config.train_batch_size = 128  
+        self.ppo_config.minibatch_size = 32  
+        self.ppo_config.gamma = 0.99
+        self.ppo_config.lr = 1e-3
+        self.ppo_config.num_workers = 1  
+        self.ppo_config.num_gpus = 1 
 
+        # 创建模型文件路径trainers/checkpoints
+        current_dir = os.path.dirname(os.path.abspath(__file__))
+        self.checkpoint_dir = os.path.join(current_dir, "checkpoints")
+        os.makedirs(self.checkpoint_dir, exist_ok=True)
+        self.plot_dir = os.path.join(current_dir, "plot")  
+        os.makedirs(self.plot_dir, exist_ok=True)
 
+        # 初始化 PPO 算法
+        self.ppo_trainer = self.ppo_config.build()
 
-# 使用无强化学习运行仿真
-def run_no_rl(max_episode, config_file, task_id):
-    print(f"Starting No-RL simulation for task {task_id}")
-    env = SumoEnv(render_mode="rgb_array", max_episodes=max_episode, max_sim_time=10000, sumocfg=config_file)
+    def train(self):
+        for episode in range(self.max_episode):
+            result = self.ppo_trainer.train()
+            # 保存模型
+            if episode % 10 == 0:
+                checkpoint = self.ppo_trainer.save(self.checkpoint_dir)
+                print(f"Checkpoint saved at {checkpoint}")
+            print("回合========>>>>>>:", episode)
 
-    for episode in range(max_episode):
+    def test(self, checkpoint_path):
+        self.ppo_trainer.restore(checkpoint_path)
+        env = SumoEnv(render_mode="rgb_array", max_episodes=1, max_sim_time=8000, sumocfg=self.config_file)
         state = env.reset()
         done = False
+        total_reward = 0
+        rewards = []
+        print(self.ppo_trainer.config.to_dict())
+
+
         while not done:
-            traci.simulationStep()
-            # action = env.action_space.sample()  # 随机动作
-            # state, reward, done, _ = env.step(action)
-            state = env._get_combined_state()
-            done = env.check_terminated()
-        print(f"Task {task_id}, Episode {episode} completed with random actions.")
-        print("回合========>>>>>>:", episode)
-    return f"Task {task_id}: No-RL simulation completed"
+            action = self.ppo_trainer.compute_single_action(state) 
+            print(f"action is: ====={action}")
+            state, reward, done, _ = env.step(action)
+            total_reward += reward
+            rewards.append(total_reward)
+        self.plot_rewards(rewards)
+        return total_reward
 
-# 使用 DQN 算法运行仿真
-def run_dqn(max_episode, config_file, task_id):
-    print(f"Starting DQN simulation for task {task_id}")
+    def plot_rewards(self, rewards):
+        plt.plot(rewards)
+        plt.xlabel('Step')
+        plt.ylabel('Reward')
+        plt.title('Reward Curve')
+        plt.savefig(os.path.join(self.plot_dir, "reward_curve.png"))
 
-    # 配置 DQN 参数
-    dqn_config = DQNConfig()
-    dqn_config.env = "sumo_env"
-    dqn_config.env_config = {
-        "render_mode": "rgb_array",
-        "max_episodes": max_episode,
-        "max_sim_time": 8000,
-        "sumocfg": config_file,
-    }
-    dqn_config.gamma = 0.99
-    dqn_config.lr = 1e-3
-    dqn_config.train_batch_size = 64
-    dqn_config.num_workers = 1  # 单线程训练
-    dqn_config.num_gpus = 1  # 使用 GPU为1
-
-    # 初始化 DQN 算法
-    dqn_trainer = dqn_config.build()
-    env = dqn_trainer.get_env()  # 使用 get_env() 获取环境
-
-    # 开始训练
-    for episode in range(max_episode):
-        # 显式调用reset方法
-        state = env.reset()  # 重新初始化环境状态
-        done = False
-        while not done:
-            action = dqn_trainer.compute_action(state)  # 计算动作
-            state, reward, done, info = env.step(action)  # 执行动作并获取反馈
-            # traci.simulationStep()  # 进行仿真步进
-        # 保存模型
-        if episode % 10 == 0:
-            checkpoint = dqn_trainer.save()
-            print(f"Task {task_id}, Checkpoint saved at {checkpoint}")
-        print("回合========>>>>>>:", episode)
-    return f"Task {task_id}: DQN simulation completed"
-
-# Ray 远程任务：No-RL
-@ray.remote(num_cpus=24)
-def run_no_rl_remote(max_episode, config_file, task_id):
-    return run_no_rl(max_episode, config_file, task_id)
-
-# Ray 远程任务：DQN
-@ray.remote(num_gpus=1)
-def run_dqn_remote(max_episode, config_file, task_id):
-    return run_dqn(max_episode, config_file, task_id)
 
 if __name__ == "__main__":
-    # 解析命令行参数
-    parser = argparse.ArgumentParser(description="Select simulation mode")
-    parser.add_argument("--mode", choices=["no-rl", "dqn"], required=True, help="Simulation mode: 'no-rl' or 'dqn'")
-    parser.add_argument("--num_tasks", type=int, default=1, help="Number of tasks to run in parallel")
-    args = parser.parse_args()
-
     # 使用绝对路径指定配置文件
     project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    # config_file = os.path.join(project_root, "sumo_xml", "three_points.sumocfg")
     config_file = os.path.join(project_root, "one_way_xml", "one_way.sumocfg")
     
-    #每个task的训练回合数
-    max_episode = 15
+    # 每个task的训练回合数
+    max_episode = 11
 
     # 启动 Ray
-    ray.shutdown()  #关闭之前的ray
+    ray.shutdown()  
     ray.init(
         ignore_reinit_error=True,
         runtime_env={
-            "working_dir": project_root,  # 使用项目根目录作为工作目录
+            "working_dir": project_root,  
             "py_modules": [
-                os.path.join(project_root, "env")  # 显式包含 env 模块
+                os.path.join(project_root, "env")  
             ],
         },
     )
-    # print("Ray initialized:", ray.is_initialized())
-    # print("Current active workers:", ray.available_resources())
 
-    # 根据选择的模式运行任务
-    if args.mode == "no-rl":
-        # 分配 No-RL 任务
-        futures = [
-            run_no_rl_remote.remote(max_episode, config_file, task_id=i)
-            for i in range(args.num_tasks)
-        ]
-    elif args.mode == "dqn":
-        # 分配 DQN 任务
-        futures = [
-            run_dqn_remote.remote(max_episode, config_file, task_id=i)
-            for i in range(args.num_tasks)
-        ]
-
-    # 收集结果
-    results = ray.get(futures)
-
-    # 输出结果
-    print("\nResults:")
-    for result in results:
-        print(result)
+    ppo_sim = PPOSimulation(max_episode, config_file)
+    ppo_sim.train()
+    # 获取最佳检查点路径
+    best_checkpoint = ppo_sim.ppo_trainer.save()
+    test_reward = ppo_sim.test(best_checkpoint)
+    print(f"Test reward: {test_reward}")
