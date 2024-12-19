@@ -5,17 +5,17 @@ import ray
 from ray import tune
 import argparse
 import matplotlib.pyplot as plt
-from ray.rllib.algorithms.ppo import PPOConfig  
-from ray.rllib.policy import Policy
+from ray.rllib.algorithms.ppo import PPOConfig
 from ray.tune.registry import register_env
-from ray.tune import Callback
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from env.sumo_env import SumoEnv
 
 # 注册环境
 def create_env(env_config):
-    return SumoEnv(**env_config)
+    return SumoEnv(render_mode="rgb_array", max_episodes=1, max_sim_time=8000, sumocfg=env_config["sumocfg"])
+
+# 注册自定义环境
 register_env("sumo_env", create_env)
 
 class PPOSimulation:
@@ -24,13 +24,7 @@ class PPOSimulation:
         self.config_file = config_file
         # 配置 PPO 参数
         self.ppo_config = PPOConfig()
-        self.ppo_config.env = "sumo_env"
-        self.ppo_config.env_config = {
-            "render_mode": "rgb_array",
-            "max_episodes": max_episode,
-            "max_sim_time": 8000,
-            "sumocfg": config_file,
-        }
+        self.ppo_config.environment(env="sumo_env", env_config={"sumocfg": config_file})
         self.ppo_config.train_batch_size = 128  
         self.ppo_config.minibatch_size = 32  
         self.ppo_config.gamma = 0.99
@@ -38,7 +32,7 @@ class PPOSimulation:
         self.ppo_config.num_workers = 1  
         self.ppo_config.num_gpus = 1 
 
-        # 创建模型文件路径trainers/checkpoints
+        # 创建模型文件路径
         current_dir = os.path.dirname(os.path.abspath(__file__))
         self.checkpoint_dir = os.path.join(current_dir, "checkpoints")
         os.makedirs(self.checkpoint_dir, exist_ok=True)
@@ -58,21 +52,25 @@ class PPOSimulation:
             print("回合========>>>>>>:", episode)
 
     def test(self, checkpoint_path):
+        # 恢复训练好的模型
         self.ppo_trainer.restore(checkpoint_path)
+
+        # 创建环境
         env = SumoEnv(render_mode="rgb_array", max_episodes=1, max_sim_time=8000, sumocfg=self.config_file)
         state = env.reset()
         done = False
         total_reward = 0
         rewards = []
-        print(self.ppo_trainer.config.to_dict())
-
 
         while not done:
-            action = self.ppo_trainer.compute_single_action(state) 
+            # 使用新的 API 获取动作
+            action_dist = self.ppo_trainer.get_policy().get_action(state)  # 获取动作分布
+            action = action_dist.sample()  # 从分布中采样动作
             print(f"action is: ====={action}")
             state, reward, done, _ = env.step(action)
             total_reward += reward
             rewards.append(total_reward)
+
         self.plot_rewards(rewards)
         return total_reward
 
@@ -99,14 +97,17 @@ if __name__ == "__main__":
         runtime_env={
             "working_dir": project_root,  
             "py_modules": [
-                os.path.join(project_root, "env")  
+                os.path.join(project_root, "env")  # 包含自定义环境的路径
             ],
         },
     )
 
     ppo_sim = PPOSimulation(max_episode, config_file)
     ppo_sim.train()
+
     # 获取最佳检查点路径
     best_checkpoint = ppo_sim.ppo_trainer.save()
+    print(f"Best checkpoint saved at {best_checkpoint}")
+
     test_reward = ppo_sim.test(best_checkpoint)
     print(f"Test reward: {test_reward}")
