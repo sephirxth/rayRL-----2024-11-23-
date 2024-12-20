@@ -7,6 +7,7 @@ import argparse
 import matplotlib.pyplot as plt
 from ray.rllib.algorithms.ppo import PPOConfig
 from ray.tune.registry import register_env
+from ray.tune.logger import UnifiedLogger
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from env.sumo_env import SumoEnv
@@ -14,9 +15,15 @@ from env.sumo_env import SumoEnv
 # 注册环境
 def create_env(env_config):
     return SumoEnv(render_mode="rgb_array", max_episodes=1, max_sim_time=8000, sumocfg=env_config["sumocfg"])
-
-# 注册自定义环境
 register_env("sumo_env", create_env)
+
+# 定义自定义日志记录器创建函数
+def custom_logger_creator(log_dir):
+    def logger_creator(config):
+        if not os.path.exists(log_dir):
+            os.makedirs(log_dir)
+        return UnifiedLogger(config, logdir=log_dir, loggers=None)
+    return logger_creator
 
 class PPOSimulation:
     def __init__(self, max_episode, config_file):
@@ -30,17 +37,21 @@ class PPOSimulation:
         self.ppo_config.gamma = 0.99
         self.ppo_config.lr = 1e-3
         self.ppo_config.num_workers = 1  
-        self.ppo_config.num_gpus = 1 
+        self.ppo_config.num_gpus = 1      
 
         # 创建模型文件路径
         current_dir = os.path.dirname(os.path.abspath(__file__))
         self.checkpoint_dir = os.path.join(current_dir, "checkpoints")
         os.makedirs(self.checkpoint_dir, exist_ok=True)
+        # 创建图片文件路径
         self.plot_dir = os.path.join(current_dir, "plot")  
         os.makedirs(self.plot_dir, exist_ok=True)
+        # 创建日志文件路径
+        self.board_dir = os.path.join(current_dir, "tensorboard_log")
+        os.makedirs(self.board_dir, exist_ok=True)
 
         # 初始化 PPO 算法
-        self.ppo_trainer = self.ppo_config.build()
+        self.ppo_trainer = self.ppo_config.build(logger_creator=custom_logger_creator(self.board_dir))
 
     def train(self):
         for episode in range(self.max_episode):
@@ -64,8 +75,8 @@ class PPOSimulation:
 
         while not done:
             # 使用新的 API 获取动作
-            action_dist = self.ppo_trainer.get_policy().get_action(state)  # 获取动作分布
-            action = action_dist.sample()  # 从分布中采样动作
+            action_dist = self.ppo_trainer.get_policy().compute_actions([state])
+            action = action_dist[0][0]  # 提取动作
             print(f"action is: ====={action}")
             state, reward, done, _ = env.step(action)
             total_reward += reward
@@ -88,8 +99,7 @@ if __name__ == "__main__":
     config_file = os.path.join(project_root, "one_way_xml", "one_way.sumocfg")
     
     # 每个task的训练回合数
-    max_episode = 11
-
+    max_episode = 200
     # 启动 Ray
     ray.shutdown()  
     ray.init(
@@ -109,5 +119,5 @@ if __name__ == "__main__":
     best_checkpoint = ppo_sim.ppo_trainer.save()
     print(f"Best checkpoint saved at {best_checkpoint}")
 
-    test_reward = ppo_sim.test(best_checkpoint)
-    print(f"Test reward: {test_reward}")
+    # test_reward = ppo_sim.test(best_checkpoint)
+    # print(f"Test reward: {test_reward}")
