@@ -1,8 +1,8 @@
 temp/
 src/temp_test/
 output/
-
-
+tensorboard_log/
+checkpoints/
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]

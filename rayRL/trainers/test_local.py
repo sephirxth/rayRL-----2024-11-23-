@@ -35,7 +35,7 @@ def train(max_episode, config_file):
             state = env._get_combined_state()
             # print("state is =====>>",state)
             done = env.check_terminated()
-        print("回合========>>>>>>:", i)
+        print("current episode 回合========>>>>>>:", i)
     env.close()
 
 

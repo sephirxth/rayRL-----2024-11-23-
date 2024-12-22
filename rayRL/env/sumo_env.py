@@ -4,7 +4,7 @@ import traci
 import numpy as np
 import os
 from .traffic import TrafficSignalController #交通灯的类 
-
+import random
 
 class SumoEnv(gym.Env):
     metadata = {"render_modes": ["human", "rgb_array"], "render_fps": 4}
@@ -14,7 +14,7 @@ class SumoEnv(gym.Env):
         render_mode: str = "human",
         max_episodes: int = 3,
         flash_episode: bool = False,
-        max_sim_time: int = 8000,
+        max_sim_time: int = 600,
         sumocfg: str = None
     ):
         """
@@ -92,9 +92,11 @@ class SumoEnv(gym.Env):
         # 关闭之前的仿真
         if self.simulation_running:
             self.close()
+            print(f"Episode {self.current_episode - 1} ended.")
 
         # 启动新仿真
-        print(self.simulation_running)
+        print(f"Starting episode {self.current_episode}...")
+       
         self._start_sumo()
         self.simulation_running = True
         self._initialize_traffic_signal_controllers()
@@ -161,16 +163,24 @@ class SumoEnv(gym.Env):
         traci.simulationStep()
 
         # 检查是否结束
-        done1 = self.sim_step >= self.max_sim_time or not traci.simulation.getMinExpectedNumber()
-        done2 = False
-
+        #done1 = self.sim_step >= self.max_sim_time or not traci.simulation.getMinExpectedNumber()
+        print(f"sim_step is {self.sim_step}, max_sim_time is {self.max_sim_time}")
+        #done2 = False
+            # terminated: 正常结束条件
+        terminated = (not traci.simulation.getMinExpectedNumber())
+        
+        # truncated: 到达最大步数的截断
+        truncated = (self.sim_step >= self.max_sim_time)
+        print(f"terminated is {terminated}, truncated is {truncated}")
         # 计算奖励
         reward = self.reward()
+        #reward = random.uniform(0, 1)
 
         # 获取下一状态
         next_state = self._get_combined_state()
-        info = {"step": self.sim_step, "reward": reward}
-        return next_state, reward, done1, done2, info
+        info = {"step": self.sim_step, "episode_reward": reward}
+        print(f"reward is : {reward}")
+        return next_state, reward, terminated, truncated, info
     
 
     def action(self, J1_phase, J2_phase):
@@ -242,7 +252,7 @@ class SumoEnv(gym.Env):
 
         # 延迟误差越小奖励越高
         reward = -avg_delay_error 
-        return reward
+        return float(reward)
 
 
     @property
