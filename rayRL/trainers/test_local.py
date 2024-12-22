@@ -1,6 +1,7 @@
 """
 测试代码
 """
+
 import traci
 import ray
 from ray import tune
@@ -9,7 +10,7 @@ from ray.rllib.env import PettingZooEnv
 from ray.tune.logger import pretty_print
 import sys
 import os
-
+from pprint import pprint
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from env.sumo_env import SumoEnv
@@ -19,7 +20,6 @@ from env.sumo_env import SumoEnv
 def train(max_episode, config_file):
     # 配置训练参数
     env = SumoEnv(
-        #render_mode="rgb_array",
         render_mode="rgb_array",
         max_episodes=max_episode,
         max_sim_time=8000,
@@ -32,12 +32,11 @@ def train(max_episode, config_file):
         done = False
         while not done:
             traci.simulationStep()
-            state = env._get_combined_state()
-            # print("state is =====>>",state)
+            state = env.get_state()
+            pprint(f"state is =====>> {state}")
             done = env.check_terminated()
         print("回合========>>>>>>:", i)
     env.close()
-
 
 
 if __name__ == "__main__":
@@ -47,4 +46,3 @@ if __name__ == "__main__":
     config_file = os.path.join(project_root, "one_way_xml", "one_way.sumocfg")
     max_episode = 3
     train(max_episode, config_file)
-
