@@ -3,19 +3,17 @@ from gymnasium import spaces
 import traci
 import numpy as np
 import os
-from .traffic import TrafficSignalController #交通灯的类 
 import random
+import configparser
+from .traffic import TrafficSignalController #交通灯的类 
+
 
 class SumoEnv(gym.Env):
     metadata = {"render_modes": ["human", "rgb_array"], "render_fps": 4}
 
     def __init__(
         self,
-        render_mode: str = "human",
-        max_episodes: int = 3,
-        flash_episode: bool = False,
-        max_sim_time: int = 600,
-        sumocfg: str = None
+        config_path="config/config.ini",
     ):
         """
         初始化 SUMO 环境。
@@ -23,16 +21,18 @@ class SumoEnv(gym.Env):
         参数:
             render_mode (str): 渲染模式（'human(gui场景可见)' 或 'rgb_array(仅数据可见)'）。
             max_episodes (int): 最大回合数。
-            flash_episode (bool): 是否为仿真测试模式。
             max_sim_time (int): 每回合的最大仿真时间。
             sumocfg(str):动态仿真文件。
         """
         super(SumoEnv, self).__init__()
-        self.render_mode = render_mode
-        self.max_episodes = max_episodes
-        self.flash_episode = flash_episode
-        self.max_sim_time = max_sim_time
-        self.sumocfg = sumocfg
+        # 读取配置文件
+        config = configparser.ConfigParser()
+        config.read(config_path)
+        env_config = config["SUMO_ENV"]
+        self.render_mode = env_config.get('render_mode', 'rgb_array')
+        self.max_episodes = env_config.getint('max_episodes', 100)
+        self.max_sim_time = env_config.getint('max_sim_time', 8000)
+        self.sumocfg = env_config.get('sumocfg')
         self.current_episode = 0#运行回合计数
         self.simulation_running = False
 
@@ -42,7 +42,7 @@ class SumoEnv(gym.Env):
 
         # 动作和状态空间定义
         self.observation_space = spaces.Box(low=0.0, high=1.0, shape=(16,), dtype=np.float32)  # 默认值，可以在后面根据实际情况调整
-        self.action_space = spaces.Discrete(4)  # 默认值，也可以在后面调整
+        self.action_space = spaces.Discrete(5)  # 默认值，也可以在后面调整
         
 
 
@@ -92,18 +92,15 @@ class SumoEnv(gym.Env):
         # 关闭之前的仿真
         if self.simulation_running:
             self.close()
-            print(f"Episode {self.current_episode - 1} ended.")
 
         # 启动新仿真
-        print(f"Starting episode {self.current_episode}...")
-       
         self._start_sumo()
         self.simulation_running = True
         self._initialize_traffic_signal_controllers()
 
         # 重置信号灯控制器状态
         for controller in self.ts_controllers.values():
-            controller.current_phase = 0
+            controller.currn = 0
             controller.time_since_last_phase_change = 0
 
         # 获取初始状态
@@ -118,7 +115,11 @@ class SumoEnv(gym.Env):
             raise EnvironmentError("SUMO_HOME 环境变量未设置。")
         sumo_binary = os.path.join(home, "bin/sumo-gui" if self.render_mode == "human" else "bin/sumo")
         sumo_cmd = [sumo_binary, "-c", self.sumocfg, "--start", "True", "--quit-on-end", "True","--no-warnings","True", "--no-step-log", "True", "--step-method.ballistic", "True"]
-        traci.start(sumo_cmd)
+        try:
+            traci.start(sumo_cmd)
+        except traci.exceptions.TraCIException as e:
+            raise RuntimeError(f"启动SUMO失败,请检查sumo配置文件路径和SUMO安装: {e}")from e
+
 
     def _get_combined_state(self):
         """
@@ -146,6 +147,8 @@ class SumoEnv(gym.Env):
         # print("#################代码运行中#########################")
         # print(f"Action received: {action}")
 
+        extra_reward = 0
+
         # 根据动作来设置不同的信号灯相位
         if self._can_switch_phase():
             if action == 1: 
@@ -156,42 +159,34 @@ class SumoEnv(gym.Env):
                 self.action(J1_phase=[3, 4], J2_phase=[3])  # J1相位3, 4, J2相位3
             elif action == 4:  
                 self.action(J1_phase=[5], J2_phase=[4, 5])  # J1相位5, J2相位4, 5
-        else:
-            print("Can not switch phase: E1 or E4 lane is not clear !!!")
+            elif action == 0: #不切换相位
+                extra_reward = -1
+            else:
+                extra_reward = 0 #无效情况
  
         # 进行仿真一步
         traci.simulationStep()
 
         # 检查是否结束
-        #done1 = self.sim_step >= self.max_sim_time or not traci.simulation.getMinExpectedNumber()
-        print(f"sim_step is {self.sim_step}, max_sim_time is {self.max_sim_time}")
-        #done2 = False
-            # terminated: 正常结束条件
         terminated = (not traci.simulation.getMinExpectedNumber())
-        
-        # truncated: 到达最大步数的截断
         truncated = (self.sim_step >= self.max_sim_time)
-        print(f"terminated is {terminated}, truncated is {truncated}")
+
         # 计算奖励
-        reward = self.reward()
-        #reward = random.uniform(0, 1)
+        reward = self.reward() + extra_reward
 
         # 获取下一状态
         next_state = self._get_combined_state()
-        info = {"step": self.sim_step, "episode_reward": reward}
-        print(f"reward is : {reward}")
+        info = {"step": self.sim_step, "reward": reward}
         return next_state, reward, terminated, truncated, info
     
 
     def action(self, J1_phase, J2_phase):
-        """动作函数。"""
-        self._set_traffic_signals("J1", J1_phase)
-        self._set_traffic_signals("J2", J2_phase)
+        """动作函数,设置每个节点应该对应的相位。"""
+        for phase in J1_phase:
+            traci.trafficlight.setPhase("J1", phase)
 
-    def _set_traffic_signals(self, ts_id, phases):
-        """设置相位函数。"""
-        for phase in phases:
-            traci.trafficlight.setPhase(ts_id, phase)
+        for phase in J2_phase:
+            traci.trafficlight.setPhase("J2", phase)
 
     def _can_switch_phase(self):
         """
@@ -200,15 +195,8 @@ class SumoEnv(gym.Env):
         返回:
             bool: 如果E1_0或E4_0车道为空,True,则返回False。
         """
-        # 检查E1_0和E4_0车道上的车辆数量
-        e1_0_vehicle_count = traci.edge.getLastStepVehicleNumber("E0")
-        e4_0_vehicle_count = traci.edge.getLastStepVehicleNumber("E4")
-        
-        # 如果两个车道都没有车辆，则可以切换相位
-        if e1_0_vehicle_count == 0 and e4_0_vehicle_count == 0:
-            return True
-        else:
-            return False
+        # 检查E1_0和E4_0
+        return traci.edge.getLastStepVehicleNumber("E0") == 0 and traci.edge.getLastStepVehicleNumber("E4") == 0
 
     def check_terminated(self):
         """仿真测试中断函数。"""
@@ -216,51 +204,101 @@ class SumoEnv(gym.Env):
         # print(f"sim_step is {self.sim_step}")
         return done
 
+    def reward1(self):
+        """
+        计算所有交通信号灯控制道路上车辆平均速度延迟误差 + 等待时间 奖励。
+
+        返回:
+            float: 总奖励。
+        """
+        total_delay_error = 0.0
+        total_waiting_time = 0.0
+        total_vehicles = 0
+        desired_speed = 13.89
+        current_max_waiting_time = 0.0
+
+        for controller in self.ts_controllers.values():
+            controlled_lanes = traci.trafficlight.getControlledLanes(controller.ts_id)
+
+            for lane_id in controlled_lanes:
+                vehicle_ids = traci.lane.getLastStepVehicleIDs(lane_id)
+
+                for vehicle_id in vehicle_ids:
+                    if vehicle_id in traci.vehicle.getIDList():
+                        current_speed = traci.vehicle.getSpeed(vehicle_id)
+                        delay_error = abs(current_speed - desired_speed)
+                        total_delay_error += delay_error
+
+                        waiting_time = traci.vehicle.getWaitingTime(vehicle_id)
+                        total_waiting_time += waiting_time
+
+                        if waiting_time > current_max_waiting_time:
+                            current_max_waiting_time = waiting_time
+
+                        total_vehicles += 1
+
+        avg_delay_error = total_delay_error / total_vehicles if total_vehicles > 0 else 0.0
+        avg_waiting_time = total_waiting_time / total_vehicles if total_vehicles > 0 else 0.0
+
+        # 动态归一化
+        normalized_delay_error = avg_delay_error / desired_speed  # 假设最大延迟误差为 desired_speed
+        normalized_waiting_time = avg_waiting_time / current_max_waiting_time if current_max_waiting_time > 0 else 0.0
+
+        # 奖励计算，使用不同的权重
+        reward = -avg_delay_error
+
+
+        # 将奖励值归一化到[-1, 1]范围内
+        # max_reward = 0
+        # min_reward = -1
+        # reward = (reward - min_reward) / (max_reward - min_reward) * 2 - 1
+        return reward
+
     def reward(self):
         """
         计算所有交通信号灯控制道路上车辆平均速度延迟误差奖励。
-        
+
         返回:
             float: 总奖励。
         """
         total_delay_error = 0.0
         total_vehicles = 0
-        # 遍历每个交通信号灯
-        for controller in self.ts_controllers.values():
-            vehicle_ids = traci.trafficlight.getControlledLanes(controller.ts_id)
-            
-            for vehicle_id in vehicle_ids:
-                if vehicle_id in traci.vehicle.getIDList():
-                    # 获取车辆当前速度
-                    current_speed = traci.vehicle.getSpeed(vehicle_id)
-                    
-                    # 期望速度
-                    desired_speed = 7
-                    
-                    # 计算延迟误差并累加
-                    delay_error = abs(current_speed - desired_speed)
-                    total_delay_error += delay_error
-                    total_vehicles += 1
-                else:
-                    continue
-        
+        desired_speed = 14  # 期望速度（单位：m/s）
+
+        # 获取所有车辆的ID列表
+        vehicle_ids = traci.vehicle.getIDList()
+
+        # 初始化一个列表来存储有效车辆的速度
+        vehicle_speeds = []
+
+        for vehicle_id in vehicle_ids:
+            try:
+                # 获取车辆当前速度
+                current_speed = traci.vehicle.getSpeed(vehicle_id)
+                vehicle_speeds.append(current_speed)
+            except traci.exceptions.TraCIException:
+                # 如果车辆ID无效，跳过此ID
+                continue
+
+        # 计算延迟误差并累加
+        delay_errors = np.abs(desired_speed - np.array(vehicle_speeds) )
+        total_delay_error = np.sum(delay_errors)
+        total_vehicles = len(vehicle_speeds)
+
         # 计算平均延迟误差
-        if total_vehicles > 0:
-            avg_delay_error = total_delay_error / total_vehicles
-        else:
-            avg_delay_error = 0.0 
+        avg_delay_error = total_delay_error / total_vehicles if total_vehicles > 0 else 0.0
 
-        # 延迟误差越小奖励越高
-        reward = -avg_delay_error 
-        return float(reward)
+        # 奖励计算，负的平均延迟误差
+        reward = - (avg_delay_error / desired_speed)
 
-
+        return reward
+    
     @property
     def sim_step(self):
         """
         当前仿真时间。
 
-        返回:
+        返回:···
             float: 仿真时间。
         """
         return traci.simulation.getTime()
