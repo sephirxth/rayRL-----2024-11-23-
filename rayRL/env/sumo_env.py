@@ -204,56 +204,6 @@ class SumoEnv(gym.Env):
         # print(f"sim_step is {self.sim_step}")
         return done
 
-    def reward1(self):
-        """
-        计算所有交通信号灯控制道路上车辆平均速度延迟误差 + 等待时间 奖励。
-
-        返回:
-            float: 总奖励。
-        """
-        total_delay_error = 0.0
-        total_waiting_time = 0.0
-        total_vehicles = 0
-        desired_speed = 13.89
-        current_max_waiting_time = 0.0
-
-        for controller in self.ts_controllers.values():
-            controlled_lanes = traci.trafficlight.getControlledLanes(controller.ts_id)
-
-            for lane_id in controlled_lanes:
-                vehicle_ids = traci.lane.getLastStepVehicleIDs(lane_id)
-
-                for vehicle_id in vehicle_ids:
-                    if vehicle_id in traci.vehicle.getIDList():
-                        current_speed = traci.vehicle.getSpeed(vehicle_id)
-                        delay_error = abs(current_speed - desired_speed)
-                        total_delay_error += delay_error
-
-                        waiting_time = traci.vehicle.getWaitingTime(vehicle_id)
-                        total_waiting_time += waiting_time
-
-                        if waiting_time > current_max_waiting_time:
-                            current_max_waiting_time = waiting_time
-
-                        total_vehicles += 1
-
-        avg_delay_error = total_delay_error / total_vehicles if total_vehicles > 0 else 0.0
-        avg_waiting_time = total_waiting_time / total_vehicles if total_vehicles > 0 else 0.0
-
-        # 动态归一化
-        normalized_delay_error = avg_delay_error / desired_speed  # 假设最大延迟误差为 desired_speed
-        normalized_waiting_time = avg_waiting_time / current_max_waiting_time if current_max_waiting_time > 0 else 0.0
-
-        # 奖励计算，使用不同的权重
-        reward = -avg_delay_error
-
-
-        # 将奖励值归一化到[-1, 1]范围内
-        # max_reward = 0
-        # min_reward = -1
-        # reward = (reward - min_reward) / (max_reward - min_reward) * 2 - 1
-        return reward
-
     def reward(self):
         """
         计算所有交通信号灯控制道路上车辆平均速度延迟误差奖励。
