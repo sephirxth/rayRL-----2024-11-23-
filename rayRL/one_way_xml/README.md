@@ -25,3 +25,4 @@
 2.one_way.rou.xml定义基本车流量 50辆/时，定义车辆类型为卡车
 3.one_way.sumocfg为仿真文件
 4.data 中包含固定配时default 和 ppo策略的车辆信息输出文件，获取固定配时时运行test_local.py, ppo策略则运行train_ray.py
+5.运行test_local.py获取车辆信息时，config文件中修改 "sumocfg_out_flash": True，则打开输出fcd文件配置，还需修改one_way.sumocfg中<tripinfo-output value="data/ppo/tripinfo/tripinfo-output.xml" />的目录为data/default/...，即可切换成功
