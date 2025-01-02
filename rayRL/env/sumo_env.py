@@ -1,10 +1,9 @@
 import  gymnasium as gym
 from gymnasium import spaces
+import xml.etree.ElementTree as ET
 import traci
 import numpy as np
 import os
-import random
-import configparser
 from .traffic import TrafficSignalController #交通灯的类 
 
 
@@ -13,7 +12,7 @@ class SumoEnv(gym.Env):
 
     def __init__(
         self,
-        config_path="config/config.ini",
+        config
     ):
         """
         初始化 SUMO 环境。
@@ -23,17 +22,16 @@ class SumoEnv(gym.Env):
             max_episodes (int): 最大回合数。
             max_sim_time (int): 每回合的最大仿真时间。
             sumocfg(str):动态仿真文件。
+            sumocfg_out_flash(bool):是否输出文件。
         """
         super(SumoEnv, self).__init__()
-        # 读取配置文件
-        config = configparser.ConfigParser()
-        config.read(config_path)
-        env_config = config["SUMO_ENV"]
-        self.render_mode = env_config.get('render_mode', 'rgb_array')
-        self.max_episodes = env_config.getint('max_episodes', 100)
-        self.max_sim_time = env_config.getint('max_sim_time', 8000)
-        self.sumocfg = env_config.get('sumocfg')
-        self.current_episode = 0#运行回合计数
+        # 读取配置文件]
+        self.render_mode = config["render_mode"]
+        self.max_episodes = config["max_episodes"]
+        self.max_sim_time = config["max_sim_time"]
+        self.sumocfg = config["sumocfg"]
+        self.sumocfg_out_flash = config["sumocfg_out_flash"]
+        self.current_episode = 0 #运行回合计数
         self.simulation_running = False
 
         # 初始化交通信号灯控制器
@@ -88,6 +86,9 @@ class SumoEnv(gym.Env):
         if seed is not None:
             np.random.seed(seed)
         self.current_episode += 1
+        
+        if self.sumocfg_out_flash:
+            self.modify_output_prefix(f'{self.current_episode}-')
 
         # 关闭之前的仿真
         if self.simulation_running:
@@ -107,6 +108,24 @@ class SumoEnv(gym.Env):
         state = self._get_combined_state()
         info = {"episode": self.current_episode}  # 可以在这里添加更多信息
         return state, info
+    
+    def modify_output_prefix(self, new_prefix):
+        """
+        修改SUMO配置文件中的<output-prefix>标签的value属性。
+        """
+        cfg_file = self.sumocfg
+        try:
+            tree = ET.parse(cfg_file)
+        except ET.ParseError as e:
+            raise
+        root = tree.getroot()
+        output_prefix = root.find('.//output-prefix')
+        if output_prefix is not None:
+            output_prefix.set('value', new_prefix)
+            tree.write(cfg_file)
+        else:
+            print("未找到<output-prefix>标签")
+
 
     def _start_sumo(self):
         """启动 SUMO 仿真。"""
@@ -114,7 +133,7 @@ class SumoEnv(gym.Env):
         if not home:
             raise EnvironmentError("SUMO_HOME 环境变量未设置。")
         sumo_binary = os.path.join(home, "bin/sumo-gui" if self.render_mode == "human" else "bin/sumo")
-        sumo_cmd = [sumo_binary, "-c", self.sumocfg, "--start", "True", "--quit-on-end", "True","--no-warnings","True", "--no-step-log", "True", "--step-method.ballistic", "True"]
+        sumo_cmd = [sumo_binary, "-c", self.sumocfg, "--start", "True", "--quit-on-end", "True","--no-warnings","True", "--no-step-log", "True", "--step-method.ballistic", "True" ]
         try:
             traci.start(sumo_cmd)
         except traci.exceptions.TraCIException as e:
@@ -160,10 +179,10 @@ class SumoEnv(gym.Env):
             elif action == 4:  
                 self.action(J1_phase=[5], J2_phase=[4, 5])  # J1相位5, J2相位4, 5
             elif action == 0: #不切换相位
-                extra_reward = -1
-            else:
-                extra_reward = 0 #无效情况
- 
+                extra_reward = 0
+        else:
+            extra_reward = 0 #无效情况
+
         # 进行仿真一步
         traci.simulationStep()
 
@@ -172,16 +191,22 @@ class SumoEnv(gym.Env):
         truncated = (self.sim_step >= self.max_sim_time)
 
         # 计算奖励
-        reward = self.reward() + extra_reward
+        if action == 0:
+            reward = extra_reward
+        else:
+            reward = self.reward()
 
         # 获取下一状态
         next_state = self._get_combined_state()
         info = {"step": self.sim_step, "reward": reward}
         return next_state, reward, terminated, truncated, info
-    
+        
 
     def action(self, J1_phase, J2_phase):
         """动作函数,设置每个节点应该对应的相位。"""
+
+        # 延迟以确保车辆完全通过
+        traci.simulationStep(5)
         for phase in J1_phase:
             traci.trafficlight.setPhase("J1", phase)
 
@@ -214,6 +239,8 @@ class SumoEnv(gym.Env):
         total_delay_error = 0.0
         total_vehicles = 0
         desired_speed = 14  # 期望速度（单位：m/s）
+        max_delay_error = 14
+        min_delay_error = 0
 
         # 获取所有车辆的ID列表
         vehicle_ids = traci.vehicle.getIDList()
@@ -239,10 +266,12 @@ class SumoEnv(gym.Env):
         avg_delay_error = total_delay_error / total_vehicles if total_vehicles > 0 else 0.0
 
         # 奖励计算，负的平均延迟误差
-        reward = - (avg_delay_error / desired_speed)
+        reward = - avg_delay_error
+        # normalized_reward =  2 * ((reward - min_delay_error) / (max_delay_error - min_delay_error)) - 1 # [-1,1]
+        normalized_reward =  ((reward - min_delay_error) / (max_delay_error - min_delay_error)) # [0,1]
 
-        return reward
-    
+        return normalized_reward
+        
     @property
     def sim_step(self):
         """

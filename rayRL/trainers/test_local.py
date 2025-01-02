@@ -1,5 +1,5 @@
 """
-测试代码
+测试代码,获取固定配时车辆输出代码
 """
 import traci
 import ray
@@ -13,18 +13,13 @@ import os
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from env.sumo_env import SumoEnv
+from config.config import SUMO_CONFIG  # 引用配置字典
 
 
 # 智能体构建及训练函数
-def train(max_episode, config_file):
+def test_local(max_episode, config_file):
     # 配置训练参数
-    env = SumoEnv(
-        #render_mode="rgb_array",
-        render_mode="rgb_array",
-        max_episodes=max_episode,
-        max_sim_time=8000,
-        sumocfg=config_file,
-    )
+    env = SumoEnv(config=config_file)
 
     # 开始训练
     for i in range(max_episode):
@@ -33,9 +28,10 @@ def train(max_episode, config_file):
         while not done:
             traci.simulationStep()
             state = env._get_combined_state()
-            # print("state is =====>>",state)
+            # reward = env.reward()
+            # print(f"rewaid is =====>>, {reward}")
             done = env.check_terminated()
-        print("current episode 回合========>>>>>>:", i)
+        print("回合========>>>>>>:", i)
     env.close()
 
 
@@ -44,7 +40,7 @@ if __name__ == "__main__":
     project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
     # 使用绝对路径指定配置文件
-    config_file = os.path.join(project_root, "one_way_xml", "one_way.sumocfg")
-    max_episode = 3
-    train(max_episode, config_file)
+    config = SUMO_CONFIG["sumo_env"]
+    max_episode = 200
+    test_local(max_episode, config)
 

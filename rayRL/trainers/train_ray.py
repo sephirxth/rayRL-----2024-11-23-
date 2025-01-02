@@ -1,7 +1,6 @@
-import traci
 import os
 import sys
-import pathlib
+from pathlib import Path
 import torch
 import numpy as np
 import ray
@@ -14,41 +13,35 @@ from ray.rllib.core.rl_module import RLModule
 from ray.rllib.algorithms.ppo import PPOConfig
 from ray.tune.registry import register_env
 from ray.tune.logger import UnifiedLogger
-import configparser
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from env.sumo_env import SumoEnv
-
+from config.config import SUMO_CONFIG  # 引用配置字典
 
 # 注册环境
 def create_env(env_config):
-    return SumoEnv(config_path=env_config["config_path"])
+    return SumoEnv(config=env_config)
 
 register_env("sumo_env", create_env)
-
 
 # 创建tensorboard记录文件
 def custom_logger_creator(log_dir):
     def logger_creator(config):
- 
-        import time
         timestr = time.strftime("%Y-%m-%d_%H-%M-%S")
         logdir = os.path.join(log_dir, f"run_{timestr}")
         os.makedirs(logdir, exist_ok=True)
         return UnifiedLogger(
             config=config,
             logdir=logdir,
-          
         )
     return logger_creator
 
-
 class PPOSimulation:
-    def __init__(self, max_episode, config_file):
+    def __init__(self, max_episode, config):
         self.max_episode = max_episode
-        self.config_file = config_file
+        self.config = config["sumo_env"]
         # 配置 PPO 参数
         self.ppo_config = PPOConfig()
-        self.ppo_config.environment(env="sumo_env", env_config={"config_path": config_file})
+        self.ppo_config.environment(env="sumo_env", env_config=self.config)
         self.ppo_config.exploration = {
             "type": "StochasticSampling",    # 使用 StochasticSampling 策略
             "stddev": 0.5,                   # 你可以设置探索时的标准差（可选）
@@ -88,13 +81,13 @@ class PPOSimulation:
         )
 
     def train(self):
+        """
+        训练 PPO 模型
+        """
         for episode in range(self.max_episode):
             result = self.ppo_trainer.train()
             
-            # logging.info("Available metrics:", result.keys())
-            # if "episode_reward_mean" in result:
-            #     self.logger.info(f"Episode {episode} mean reward: {result['episode_reward_mean']}")
-            #动态调整探索策略
+            # 动态调整探索策略
             self.ppo_config.exploration["stddev"] = max(0.1, 0.5 * (1 - episode / self.max_episode))
 
             # 保存模型
@@ -102,50 +95,94 @@ class PPOSimulation:
                 checkpoint = self.ppo_trainer.save(self.checkpoint_dir)
                 self.logger.info(f"Checkpoint saved at {checkpoint}")
             self.logger.info(f"回合========>>>>>>: {episode}")
+    
+    def load_and_evaluate_model(self, checkpoint_path):
+        """
+        加载训练好的模型并进行评估
+        """
+        # 检查并提取路径字符串
+        if isinstance(checkpoint_path, dict):
+            checkpoint_path_str = checkpoint_path["local_path"]
+        elif hasattr(checkpoint_path, "checkpoint") and hasattr(checkpoint_path.checkpoint, "path"):
+            checkpoint_path_str = checkpoint_path.checkpoint.path
+        else:
+            checkpoint_path_str = checkpoint_path
 
-    def test(self, checkpoint_path):
-        # 恢复训练好的模型
-        if hasattr(checkpoint_path, "local_path"):
-            checkpoint_path = checkpoint_path["local_path"]
-        self.ppo_trainer.restore(checkpoint_path)
+        # 从检查点恢复训练器
+        self.ppo_trainer.restore(checkpoint_path_str)
 
-        # 创建环境
-        env = SumoEnv(config_path=self.config_file)
-        state = env.reset()
-        done = False
-        total_reward = 0
-        rewards = []
-
-        while not done:
-            action = self.ppo_trainer.compute_actions(state)
-            print(f"action is: ====={action}")
-            state, reward, done, _ = env.step(action)
-            total_reward += reward
-            rewards.append(total_reward)
+        module_path = Path(checkpoint_path_str) / "learner_group" / "learner" / "rl_module" / "default_policy"
         
+        # 确保路径存在
+        if not module_path.exists():
+            raise ValueError(f"Module path does not exist: {module_path}")
+            
+        rl_module = RLModule.from_checkpoint(module_path)
+
+        # 评估循环
+        env = SumoEnv(config=self.config)
+        obs, info = env.reset()
+        terminated = truncated = False
+        episode_reward = 0.0
+        rewards = []
+        
+        while not (terminated or truncated):
+            # 将observation转换为tensor并添加batch维度
+            if isinstance(obs, dict):  # 对于多智能体环境
+                actions = {}
+                for agent_id, agent_obs in obs.items():
+                    torch_obs = torch.from_numpy(np.array([agent_obs]))
+                    # 获取动作分布输入
+                    outputs = rl_module.forward_inference({"obs": torch_obs})
+                    # 获取动作分布类
+                    action_dist_class = rl_module.get_inference_action_dist_cls()
+                    # 从logits创建动作分布
+                    action_dist = action_dist_class.from_logits(outputs["action_dist_inputs"])
+                    # 采样动作
+                    action = action_dist.sample()[0].numpy()
+                    actions[agent_id] = action
+            else:  # 对于单智能体环境
+                torch_obs = torch.from_numpy(np.array([obs]))
+                outputs = rl_module.forward_inference({"obs": torch_obs})
+                
+                # 对于离散动作空间
+                if hasattr(env.action_space, 'n'):  
+                    action = torch.argmax(outputs["action_dist_inputs"][0]).numpy()
+                # 对于连续动作空间
+                else:  
+                    action_dist_class = rl_module.get_inference_action_dist_cls()
+                    action_dist = action_dist_class.from_logits(outputs["action_dist_inputs"])
+                    action = action_dist.sample()[0].numpy()
+
+            # 执行动作
+            obs, reward, terminated, truncated, info = env.step(action)
+            episode_reward += reward
+            rewards.append(episode_reward)
+        env.close() # 关闭环境
         self.plot_rewards(rewards)
-        return total_reward
     
     def plot_rewards(self, rewards):
+        '''
+        绘制奖励曲线
+        '''
         plt.plot(rewards)
         plt.xlabel("Step")
         plt.ylabel("Reward")
         plt.title("Reward Curve")
         plt.savefig(os.path.join(self.plot_dir, "reward_curve.png"))
 
-
 if __name__ == "__main__":
-    # 使用绝对路径指定配置文件
+    # 使用配置字典中的配置
     project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    config_file = os.path.join(project_root, "config", "config.ini")
+    config = SUMO_CONFIG
 
-    # 每个task的训练回合数
-    max_episode = 40
+    # 每个任务的训练回合数
+    max_episode = config["sumo_env"]["max_episodes"]
+    print(f"max_episode: {max_episode}")
     # 启动 Ray
     ray.shutdown()
     ray.init(
         ignore_reinit_error=True,
-        #local_mode=True, 
         runtime_env={
             "working_dir": project_root,
             "py_modules": [
@@ -154,13 +191,13 @@ if __name__ == "__main__":
         },
     )
 
-    ppo_sim = PPOSimulation(max_episode, config_file)
+    ppo_sim = PPOSimulation(max_episode, config)
     ppo_sim.train()
 
     # 获取最佳检查点路径
     best_checkpoint = ppo_sim.ppo_trainer.save()
     logging.info(f"Best checkpoint saved at {best_checkpoint}")
 
-    # 复现问题的代码，注释ppo_sim.train()，取消注释下面的代码即可
-    # test_reward = ppo_sim.test(best_checkpoint)
+    # 复现问题的代码，注释 ppo_sim.train()，取消注释下面的代码即可
+    # ppo_sim.load_and_evaluate_model(best_checkpoint)
     # logging.info(f"Test reward: {test_reward}")

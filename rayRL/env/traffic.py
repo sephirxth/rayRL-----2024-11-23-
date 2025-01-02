@@ -5,7 +5,7 @@ from gymnasium import spaces
 class TrafficSignalController:
     """控制单个交通信号灯的类，包含状态获取、动作应用和奖励计算的功能"""
 
-    def __init__(self, ts_id, ts_lanes, num_phases, reward_fn=None):
+    def __init__(self, ts_id, ts_lanes, num_phases):
         """
         初始化交通信号灯控制器
 
@@ -13,7 +13,6 @@ class TrafficSignalController:
             ts_id (str): 交通信号灯的ID
             ts_lanes(str): 交通灯实际控制的车道ID列表
             num_phases (int): 信号灯的相位数量
-            reward_fn (callable, optional): 自定义奖励函数（如果没有提供，则使用默认函数）
         """
         self.ts_id = ts_id
         self.ts_lanes = ts_lanes
@@ -38,10 +37,6 @@ class TrafficSignalController:
             shape=(num_phases + 2 * len(self.filtered_lane),),  # 只考虑锁定放行方向的车道
             dtype=np.float32,
         )
-
-        # 奖励函数
-        self.reward_fn = reward_fn or self.default_reward_fn  
-        self.last_reward = 0
 
     def get_state(self):
         """
@@ -73,18 +68,12 @@ class TrafficSignalController:
     def _get_lane_queue(self, lane):
         """计算车道的排队比例（排队车辆数 / 车道容量）"""
         return min(1.0, traci.lane.getLastStepHaltingNumber(lane) / self._get_lane_capacity(lane))
-
+    
     def _get_lane_capacity(self, lane):
         """计算车道的容量（能够容纳的最大车辆数）"""
-        return self.lane_lengths[lane] / (2.5 + traci.lane.getLastStepLength(lane))  # 假设车间距为2.5米
-
-
-    def compute_reward(self):
-        """计算交通信号灯的奖励"""
-        self.last_reward = self.reward_fn()
-        return self.last_reward
-
-    def default_reward_fn(self):
-        """默认奖励函数：负的所有车道的总等待时间"""
-        waiting_times = [traci.lane.getWaitingTime(lane) for lane in self.filtered_lane]
-        return -sum(waiting_times)
+        vehicle_length = 7.1  # 平均车辆长度（米）
+        spacing = 2.5  # 车间距（米）
+        total_length = vehicle_length + spacing
+        lane_length = traci.lane.getLength(lane)
+        capacity = lane_length / total_length
+        return capacity

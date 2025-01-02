@@ -9,6 +9,11 @@
         <net-file value="one_way.net.xml"/>
         <route-files value="one_way.rou.xml"/>
     </input>
+
+    <output>
+        <output-prefix value="1-" />
+        <tripinfo-output value="data/ppo/tripinfo/tripinfo-output.xml" />
+    </output>
     
     <time>
         <step-length value="1.0"/>
