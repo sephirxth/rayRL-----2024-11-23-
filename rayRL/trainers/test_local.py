@@ -1,5 +1,5 @@
 """
-测试代码,获取固定配时车辆输出代码
+测试代码
 """
 import traci
 import ray
@@ -41,6 +41,6 @@ if __name__ == "__main__":
 
     # 使用绝对路径指定配置文件
     config = SUMO_CONFIG["sumo_env"]
-    max_episode = 200
+    max_episode = 50 # 训练回合数 or 车流量
     test_local(max_episode, config)
 

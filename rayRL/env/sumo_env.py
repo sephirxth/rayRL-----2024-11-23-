@@ -22,7 +22,9 @@ class SumoEnv(gym.Env):
             max_episodes (int): 最大回合数。
             max_sim_time (int): 每回合的最大仿真时间。
             sumocfg(str):动态仿真文件。
+            rou_xml(str):路由文件。
             sumocfg_out_flash(bool):是否输出文件。
+            rou_vehsPerHour_falsh(bool):是否修改rou_vehsPerHour。
         """
         super(SumoEnv, self).__init__()
         # 读取配置文件]
@@ -30,7 +32,9 @@ class SumoEnv(gym.Env):
         self.max_episodes = config["max_episodes"]
         self.max_sim_time = config["max_sim_time"]
         self.sumocfg = config["sumocfg"]
+        self.rou_xml = config["rou_xml"]
         self.sumocfg_out_flash = config["sumocfg_out_flash"]
+        self.rou_vehsPerHour_falsh = config["rou_vehsPerHour_falsh"]
         self.current_episode = 0 #运行回合计数
         self.simulation_running = False
 
@@ -88,7 +92,10 @@ class SumoEnv(gym.Env):
         self.current_episode += 1
         
         if self.sumocfg_out_flash:
-            self.modify_output_prefix(f'{self.current_episode}-')
+            if self.rou_vehsPerHour_falsh:
+                self.modify_rou_vehsPerHour(self.current_episode) # 修改车流量
+                self.modify_output_prefix(f'{self.current_episode}-vehsPerHour')# 若修改车流量，输出文件名前缀为车流量
+            self.modify_output_prefix(f'{self.current_episode}-') # 若不修改车流量，输出文件名前缀为回合数
 
         # 关闭之前的仿真
         if self.simulation_running:
@@ -125,7 +132,24 @@ class SumoEnv(gym.Env):
             tree.write(cfg_file)
         else:
             print("未找到<output-prefix>标签")
-
+            
+    def modify_rou_vehsPerHour(self, new_vehs_per_hour):
+        """
+        修改 SUMO 仿真中的 .rou.xml 文件以调整车流量。
+        """
+        rou_file = self.rou_xml
+        try:
+            tree = ET.parse(rou_file)
+        except ET.ParseError as e:
+            raise
+        root = tree.getroot()
+        flows = root.findall('.//flow')
+        if flows:
+            for flow in flows:
+                flow.set('vehsPerHour', str(new_vehs_per_hour))
+            tree.write(rou_file)
+        else:
+            print("未找到 <flow> 标签")
 
     def _start_sumo(self):
         """启动 SUMO 仿真。"""

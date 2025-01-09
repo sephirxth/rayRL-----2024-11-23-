@@ -1,0 +1,7 @@
+tripinfo_arrival;tripinfo_arrivalLane;tripinfo_arrivalPos;tripinfo_arrivalSpeed;tripinfo_depart;tripinfo_departDelay;tripinfo_departLane;tripinfo_departPos;tripinfo_departSpeed;tripinfo_devices;tripinfo_duration;tripinfo_id;tripinfo_rerouteNo;tripinfo_routeLength;tripinfo_speedFactor;tripinfo_stopTime;tripinfo_timeLoss;tripinfo_vType;tripinfo_vaporized;tripinfo_waitingCount;tripinfo_waitingTime
+1520.00;E5_0;300.00;13.45;0.00;0.00;E0_0;7.20;0.00;tripinfo_f_0.0;1520.00;f_0.0;0;10003.87;1.03;0.00;798.36;car_0;;1;736.00
+2300.00;E5_0;300.00;12.18;600.00;0.00;E0_0;7.20;0.00;tripinfo_f_0.1;1700.00;f_0.1;0;10003.87;0.97;0.00;955.13;car_0;;3;879.00
+2302.00;E5_0;300.00;13.20;1200.00;0.00;E0_0;7.20;0.00;tripinfo_f_0.2;1102.00;f_0.2;0;10003.87;1.01;0.00;380.14;car_0;;2;306.00
+3062.00;E5_0;300.00;12.71;1800.00;0.00;E0_0;7.20;0.00;tripinfo_f_0.3;1262.00;f_0.3;0;10003.87;1.04;0.00;539.90;car_0;;1;475.00
+3832.00;E5_0;300.00;13.39;2400.00;0.00;E0_0;7.20;0.00;tripinfo_f_0.4;1432.00;f_0.4;0;10003.87;1.02;0.00;710.20;car_0;;1;642.00
+4630.00;E5_0;300.00;11.85;3000.00;0.00;E0_0;7.20;0.00;tripinfo_f_0.5;1630.00;f_0.5;0;10003.87;0.92;0.00;841.46;car_0;;2;761.00

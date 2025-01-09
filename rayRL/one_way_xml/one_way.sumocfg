@@ -12,7 +12,7 @@
 
     <output>
         <output-prefix value="1-" />
-        <tripinfo-output value="data/ppo/tripinfo/tripinfo-output.xml" />
+        <tripinfo-output value="data/default/tripinfo/tripinfo-output.xml" />
     </output>
     
     <time>
